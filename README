@@ -1,0 +1,34 @@
+Cherryize
+=========
+
+Cherryize is simple wrapper around the CherryPy WSGI server. It can be used to run WSGI 
+compatible applications such as Django, Pylons etc...
+
+It is essentially a fork of Django Cerise Project:
+
+http://xhtml.net/scripts/Django-CherryPy-server-DjangoCerise
+
+Which has a similar purpose, this is intended to be slightly easier to use & configure 
+and to work with other WSGI applications - not just Django
+
+
+---
+
+# Sample YAML Configuration
+
+app:                django.core.handlers.wsgi.WSGIHandler
+ip_address:         127.0.0.1
+port:               8080
+pid_file:           /some/pid.file
+server_name:        localhost
+server_threads:     10
+server_user:        nobody
+server_group:       nobody
+server_run_dir:     /tmp/server
+server_daemonize:   true
+log:                /tmp/server.log
+ssl:                false
+ssl_certificate:    /some/certificate
+ssl_private_key:    /some/key
+django_settings:    your.project.settings  <-- You only need this for django projects :)
+
