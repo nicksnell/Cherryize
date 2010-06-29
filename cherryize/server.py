@@ -1,7 +1,7 @@
 """Cherryize
 
 Tool for using the standalone CherryPy webserver to run WSGI compatible 
-applications such as Django...
+applications such as Django, Pylons etc...
 """
 
 import os
@@ -19,21 +19,21 @@ from cherryize.utils import import_object, get_uid_gid, switch_uid_gid
 
 __all__ = ('WSGIServer',)
 
-log = logging.getLogger('cherryize')
-
 DEFAULTS = {
-	'APP': 'django.core.handlers.wsgi.WSGIHandler',
+	'APP': '',
 	'SERVER_NAME': 'localhost',
 	'SERVER_THREADS': 10,
 	'SERVER_RUN_DIR': '/tmp',
 	'SERVER_DAEMONIZE': True,
-	'SERVER_USER': 'nobody'
+	'SERVER_USER': 'nobody',
 	'SERVER_GROUP': 'nobody',
-	'IP_ADDRESS': '127.0.0.1',
-	'PORT': 8080,
+	'SERVER_TIMEOUT': 60,
+	'SERVER_IP': '127.0.0.1',
+	'SERVER_PORT': 8080,
+	'SERVER_REQUEST_QUEUE_SIZE': 5,
 	'LOG': 'server.log',
+	'LOG_FORMAT': '%(asctime)s %(levelname)s %(message)s',
 	'PID_FILE': 'server.pid',
-	'SSL': False,
 	'SSL_CERTIFICATE': '',
 	'SSL_PRIVATE_KEY': '',
 }
@@ -51,33 +51,45 @@ class WSGIServer(object):
 			# Can't read or can't parse, either way no good
 			raise RuntimeError(u'Unable to read configuration file! %s' % e)
 		
+		config = dict([(k.upper(), v) for k, v in config.items()])
+		
 		server_config = DEFAULTS
 		server_config.update(config)
 		
-		self.config = dict([(k.upper(), v) for k, v in server_config.items()])
+		self.config = server_config
+		
+		assert self.config['APP'], u'You must provide a WSGI application'
+		
+		# Setup the log...
+		self.log = logging.getLogger('cherryize')
+		log_handler = logging.FileHandler(self.config['LOG'])
+		log_formatter = logging.Formatter(self.config['LOG_FORMAT'])
+		log_handler.setFormatter(log_formatter)
+		self.log.addHandler(log_handler)
+		self.log.setLevel(logging.INFO)
 		
 	def clean(self):
 		"""Attempt to clean up the environment if running as a deamon"""
 		
-		if self.config['DAEMONIZE']:
+		if self.config['SERVER_DAEMONIZE']:
 			if os.path.exists(self.config['PID_FILE']):
 				try:
 					os.remove(self.config['PID_FILE'])
 				except IOError:
-					log.error(u'Unable to remove PID file at: %s' % self.config['PID_FILE'])
+					self.log.error(u'Unable to remove PID file at: %s' % self.config['PID_FILE'])
 		
 	def run(self):
 		"""Main run loop"""
 		
 		# Check if we are running a django project
 		if self.config['DJANGO_SETTINGS']:
-			os.environ['DJANGO_SETTINGS'] = self.config['DJANGO_SETTINGS']
+			os.environ['DJANGO_SETTINGS_MODULE'] = self.config['DJANGO_SETTINGS']
 		
-		if self.config['DAEMONIZE']:
+		if self.config['SERVER_DAEMONIZE']:
 			# Double fork magic!
 			if os.path.exists(self.config['PID_FILE']):
 				current_pid = open(self.config['PID_FILE'], 'r').read()
-				log.error(u'Unable to start server - already running! @ PID = %s' % current_pid)
+				self.log.error(u'Unable to start server - already running! @ PID = %s' % current_pid)
 				sys.exit(1)
 			
 			# The First Fork....
@@ -88,7 +100,7 @@ class WSGIServer(object):
 					# Exit first parent
 					sys.exit(0)
 			except OSError, e:
-				log.error(u'Unable to start server - Can not fork parent process: %s' % e) 
+				self.log.error(u'Unable to start server - Can not fork parent process: %s' % e) 
 				sys.exit(1)
 				
 			# Decouple ourselves
@@ -113,7 +125,7 @@ class WSGIServer(object):
 					sys.exit(0)
 					
 			except OSError, e:
-				log.error(u'Unable to start server - Can not double fork: %s' % e)
+				self.log.error(u'Unable to start server - Cannot double fork: %s' % e)
 				sys.exit(1)
 			
 			# Switch the user and group
@@ -121,6 +133,7 @@ class WSGIServer(object):
 		
 		else:
 			# Non-demon
+			sys.path.append(self.config['SERVER_RUN_DIR'])
 			pid = os.getpid()
 		
 		application = import_object(self.config['APP'])
@@ -128,13 +141,13 @@ class WSGIServer(object):
 		
 		# Setup the server
 		self.server = CherryPyWSGIServer(
-			(self.config['IP'], self.config['PORT']), 
-			app, 
-			server_name=self.config['SERVER_NAME'], 
-			numthreads=self.config['SERVER_THREADS'], 
-			max=-1, 
-			request_queue_size=5, 
-			timeout=60
+			(self.config['SERVER_IP'], self.config['SERVER_PORT']),
+			app,
+			server_name=self.config['SERVER_NAME'],
+			numthreads=self.config['SERVER_THREADS'],
+			max=-1,
+			request_queue_size=self.config['SERVER_REQUEST_QUEUE_SIZE'],
+			timeout=self.config['SERVER_TIMEOUT']
 		)
 		
 		# Setup SSL if it has been requested....
@@ -149,24 +162,16 @@ class WSGIServer(object):
 		
 		# Start....
 		try:
-			if self.verbose:
-				print u'Server is running. %s:%s / PID %s' % (self.ip, self.port, pid)
-			
-			log.info(u'Server is running. %s:%s / PID %s' % (self.ip, self.port, pid))
-			
+			self.log.info(u'Server is running. %s:%s / PID %s' % (self.config['SERVER_IP'], self.config['SERVER_PORT'], pid))
 			self.server.start()
-			
 		except KeyboardInterrupt:
-			if self.verbose:
-				print u'Server received keyboard interrupt - shutting down.... ',
-			
-			log.info(u'Server received keyboard interrupt - shutting down')
+			self.log.info(u'Server received keyboard interrupt - shutting down')
 			
 			self.server.stop()
 			self.clean()
-			
-			if self.verbose:
-				print u'Done.'
+		except Exception, e:
+			self.log.error(u'Server failed %s' % e)
+			self.clean()
 		
 	def signal_handler(self, sig, stack):
 		"""Handle OS signals sent to the server"""
@@ -175,10 +180,10 @@ class WSGIServer(object):
 			pass
 			
 		elif sig == signal.SIGHUP:
-			log.info(u'Server recieved SIGHUP - restarting')
+			self.log.info(u'Server recieved SIGHUP - restarting')
 			
 		elif sig == signal.SIGTERM:
-			log.info(u'Server recieved SIGTERM - shutting down')
+			self.log.info(u'Server recieved SIGTERM - shutting down')
 			
 			self.server.stop()
 			self.clean()
@@ -186,7 +191,7 @@ class WSGIServer(object):
 			sys.exit(0)
 			
 		else:
-			log.info(u'Server recieved unknown signal "%s" - ignoring' % sig)
+			self.log.info(u'Server recieved unknown signal "%s" - ignoring' % sig)
 			
 		# @@ Todo - any of these needed?
 		# TERM, INT

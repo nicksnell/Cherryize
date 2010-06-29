@@ -38,6 +38,6 @@ setup(
 		]
 	},
 	install_requires=[
-		'PyYAML>=3.09'
+		'pyyaml>=3.09'
 	]
 )

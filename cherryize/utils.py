@@ -5,7 +5,7 @@ import sys
 import pwd
 import grp
 
-__all__
+__all__ = ('import_module', 'import_object', 'get_uid_gid', 'switch_uid_gid')
 
 def import_module(name, globals=globals(), locals=locals(), fromlist=[], level=-1):
 	__import__(name, globals, locals, fromlist, level)

@@ -8,14 +8,25 @@ It is essentially a fork of Django Cerise Project:
 
 http://xhtml.net/scripts/Django-CherryPy-server-DjangoCerise
 
+(and indeed much of the credit should go here)
+
 Which has a similar purpose, this is intended to be slightly easier to use & configure 
-and to work with other WSGI applications - not just Django
+(only have one config file) and to work with other WSGI applications - not just Django
+
+Usage
+-----
+
+1. Create a configuration file in your project (the project root is probably the best 
+place) - see the sample config below for options.
+
+2. Call "cherryize /path/to/conf" or "cherryize --conf=/path/to/conf" to start the 
+server. Depending on your settings this will either print the PID and return (in the
+case of daemon mode) or will to continue to run until manually terminated.
 
 
 ---
 
-# Sample YAML Configuration
-
+### Sample YAML Configuration
 app:                django.core.handlers.wsgi.WSGIHandler
 ip_address:         127.0.0.1
 port:               8080
@@ -27,8 +38,11 @@ server_group:       nobody
 server_run_dir:     /tmp/server
 server_daemonize:   true
 log:                /tmp/server.log
-ssl:                false
+
+# Need both of these to have SSL enabled
 ssl_certificate:    /some/certificate
 ssl_private_key:    /some/key
-django_settings:    your.project.settings  <-- You only need this for django projects :)
+
+# You only need this for django projects :)
+django_settings:    your.project.settings
 
