@@ -4,6 +4,9 @@ Tool for using the standalone CherryPy webserver to run WSGI compatible
 applications such as Django, Pylons etc...
 """
 
+# Nick Snell <nick@orpo.co.uk>
+# 29th June 2010
+
 import os
 import os.path
 import logging
@@ -38,6 +41,8 @@ DEFAULTS = {
 	'SSL_PRIVATE_KEY': '',
 }
 
+VALID_COMMANDS = 'START', 'STOP', 'RESTART'
+
 class WSGIServer(object):
 	"""A Basic WSGI Server"""
 	
@@ -67,23 +72,30 @@ class WSGIServer(object):
 		log_handler.setFormatter(log_formatter)
 		self.log.addHandler(log_handler)
 		self.log.setLevel(logging.INFO)
+	
+	def run(self, cmd):
+		"""Command line startup"""
 		
-	def clean(self):
-		"""Attempt to clean up the environment if running as a deamon"""
+		assert cmd in VALID_COMMANDS, u'You must provide a valid commands!'
 		
-		if self.config['SERVER_DAEMONIZE']:
-			if os.path.exists(self.config['PID_FILE']):
-				try:
-					os.remove(self.config['PID_FILE'])
-				except IOError:
-					self.log.error(u'Unable to remove PID file at: %s' % self.config['PID_FILE'])
+		if cmd == 'START':
+			self.start()
+		elif cmd == 'STOP':
+			self.stop()
+		elif cmd == 'RESTART':
+			self.stop()
+			self.start()
+	
+	def start(self):
+		"""Start a server running"""
 		
-	def run(self):
-		"""Main run loop"""
+		sys.path.append(self.config['SERVER_RUN_DIR'])
 		
 		# Check if we are running a django project
 		if self.config['DJANGO_SETTINGS']:
 			os.environ['DJANGO_SETTINGS_MODULE'] = self.config['DJANGO_SETTINGS']
+		
+		pid = None
 		
 		if self.config['SERVER_DAEMONIZE']:
 			# Double fork magic!
@@ -136,7 +148,6 @@ class WSGIServer(object):
 		
 		else:
 			# Non-demon
-			sys.path.append(self.config['SERVER_RUN_DIR'])
 			pid = os.getpid()
 		
 		application = import_object(self.config['APP'])
@@ -169,13 +180,42 @@ class WSGIServer(object):
 			self.server.start()
 		except KeyboardInterrupt:
 			self.log.info(u'Server received keyboard interrupt - shutting down')
-			
 			self.server.stop()
 			self.clean()
 		except Exception, e:
 			self.log.error(u'Server failed %s' % e)
 			self.clean()
+	
+	def stop(self):
+		"""Stop a server if it's running"""
 		
+		# See if there is a valid process ID
+		if not os.path.exists(self.config['PID_FILE']):
+			# Server is already stopped
+			self.log.debug(u'Trying to stop a server that does not exist! (PID file %s)' % self.config['PID_FILE'])
+			return
+		
+		try:
+			pid = open(self.config['PID_FILE'], 'r').read()
+		except OSError:
+			self.log.info(u'Unable to open PID file: %s' % self.config['PID_FILE'])
+		
+		try:
+			os.kill(int(pid), signal.SIGTERM)
+		except OSError, err:
+			self.log.error(u'Unable to kill process')
+			sys.exit(1)
+	
+	def clean(self):
+		"""Attempt to clean up the environment if running as a deamon"""
+		
+		if self.config['SERVER_DAEMONIZE']:
+			if os.path.exists(self.config['PID_FILE']):
+				try:
+					os.remove(self.config['PID_FILE'])
+				except IOError:
+					self.log.error(u'Unable to remove PID file at: %s' % self.config['PID_FILE'])
+					
 	def signal_handler(self, sig, stack):
 		"""Handle OS signals sent to the server"""
 		
@@ -184,6 +224,11 @@ class WSGIServer(object):
 			
 		elif sig == signal.SIGHUP:
 			self.log.info(u'Server recieved SIGHUP - restarting')
+			
+			self.server.stop()
+			self.clean()
+			
+			self.start()
 			
 		elif sig == signal.SIGTERM:
 			self.log.info(u'Server recieved SIGTERM - shutting down')
@@ -215,14 +260,19 @@ def main():
 	
 	if options.conf is not None:
 		config_file_path = options.conf
-	elif len(args) > 1:
-		config_file_path = args[1]
 	else:
-		print 'You must specify a webserver configuration file!'
+		print u'You must specify a webserver configuration file!'
 		sys.exit(1)
 	
+	cmd = None
+	
+	if len(args) > 0:
+		cmd = args[0].upper()
+	else:
+		cmd = 'START'
+	
 	server = WSGIServer(config_file_path)
-	server.run()
+	server.run(cmd)
 	
 if __name__ == '__main__':
 	main()
