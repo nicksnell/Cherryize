@@ -127,7 +127,10 @@ class WSGIServer(object):
 			except OSError, e:
 				self.log.error(u'Unable to start server - Cannot double fork: %s' % e)
 				sys.exit(1)
-			
+				
+			else:
+				pid = open(self.config['PID_FILE'], 'r').read()
+				
 			# Switch the user and group
 			switch_uid_gid(self.config['SERVER_USER'], self.config['SERVER_GROUP'])
 		
