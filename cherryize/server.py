@@ -39,6 +39,7 @@ DEFAULTS = {
 	'PID_FILE': 'server.pid',
 	'SSL_CERTIFICATE': '',
 	'SSL_PRIVATE_KEY': '',
+	'PATHS': [],
 }
 
 VALID_COMMANDS = 'START', 'STOP', 'RESTART'
@@ -89,7 +90,11 @@ class WSGIServer(object):
 	def start(self):
 		"""Start a server running"""
 		
+		# Add nessecary paths
 		sys.path.append(self.config['SERVER_RUN_DIR'])
+		
+		for path in self.config['PATHS']:
+			sys.path.append(path)
 		
 		# Check if we are running a django project
 		if self.config['DJANGO_SETTINGS']:
