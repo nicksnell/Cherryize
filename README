@@ -19,18 +19,17 @@ Usage
 1. Create a configuration file in your project (the project root is probably the best 
 place) - see the sample config below for options.
 
-2. Call "cherryize /path/to/conf" or "cherryize --conf=/path/to/conf" to start the 
-server. Depending on your settings this will either print the PID and return (in the
-case of daemon mode) or will to continue to run until manually terminated.
-
+2. Call "cherryize start --conf=/path/to/conf" to start the server. Depending on your settings 
+this will either print the PID and return (in the case of daemon mode) or will to continue to 
+run until manually terminated. You can substitute 'start' for 'stop' and 'restart'.
 
 ---
 
 ### Sample YAML Configuration
 app:                django.core.handlers.wsgi.WSGIHandler
-ip_address:         127.0.0.1
-port:               8080
 pid_file:           /some/pid.file
+server_ip:          127.0.0.1
+server_port:        8080
 server_name:        localhost
 server_threads:     10
 server_user:        nobody
