@@ -40,6 +40,7 @@ DEFAULTS = {
 	'SSL_CERTIFICATE': '',
 	'SSL_PRIVATE_KEY': '',
 	'PATHS': [],
+	'ENVIRON': {},
 }
 
 VALID_COMMANDS = 'START', 'STOP', 'RESTART'
@@ -97,8 +98,12 @@ class WSGIServer(object):
 			sys.path.append(path)
 		
 		# Check if we are running a django project
-		if self.config['DJANGO_SETTINGS']:
+		if 'DJANGO_SETTINGS' in self.config and self.config['DJANGO_SETTINGS']:
 			os.environ['DJANGO_SETTINGS_MODULE'] = self.config['DJANGO_SETTINGS']
+		
+		if self.config['ENVIRON']:
+			for k, v in self.config['ENVIRON'].items():
+				os.environ[k] = v
 		
 		pid = None
 		
