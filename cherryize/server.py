@@ -92,10 +92,10 @@ class WSGIServer(object):
 		"""Start a server running"""
 		
 		# Add nessecary paths
-		sys.path.append(self.config['SERVER_RUN_DIR'])
+		sys.path.insert(0, self.config['SERVER_RUN_DIR'])
 		
 		for path in self.config['PATHS']:
-			sys.path.append(path)
+			sys.path.insert(0, path)
 		
 		# Check if we are running a django project
 		if 'DJANGO_SETTINGS' in self.config and self.config['DJANGO_SETTINGS']:
