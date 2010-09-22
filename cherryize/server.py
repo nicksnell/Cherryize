@@ -5,7 +5,6 @@ applications such as Django, Pylons etc...
 """
 
 # Nick Snell <nick@orpo.co.uk>
-# 29th June 2010
 
 import os
 import os.path
@@ -21,6 +20,7 @@ from cherryize.wsgiserver import CherryPyWSGIServer
 from cherryize.utils import import_object, get_uid_gid, switch_uid_gid
 
 __all__ = ('WSGIServer',)
+__version__ = '1.0'
 
 DEFAULTS = {
 	'APP': '',
@@ -68,12 +68,24 @@ class WSGIServer(object):
 		assert self.config['APP'], u'You must provide a WSGI application'
 		
 		# Setup the log...
+		logging.basicConfig(
+			level=logging.DEBUG,
+			format=self.config['LOG_FORMAT'],
+			filename=self.config['LOG'],
+			filemode='a+'
+		)
+		
 		self.log = logging.getLogger('cherryize')
-		log_handler = logging.FileHandler(self.config['LOG'])
-		log_formatter = logging.Formatter(self.config['LOG_FORMAT'])
-		log_handler.setFormatter(log_formatter)
-		self.log.addHandler(log_handler)
-		self.log.setLevel(logging.INFO)
+		
+		# Console logger - In the case of cherrize running as a daemon
+		# this console output only writes to the console before the daemon
+		# forks itself. This is useful for outputting infomration when the 
+		# daemon fails to start.
+		console = logging.StreamHandler()
+		console.setLevel(logging.WARNING)
+		console.setFormatter(logging.Formatter('%(levelname)-8s %(message)s'))
+		
+		self.log.addHandler(console)
 	
 	def run(self, cmd):
 		"""Command line startup"""
@@ -110,8 +122,7 @@ class WSGIServer(object):
 		if self.config['SERVER_DAEMONIZE']:
 			# Double fork magic!
 			if os.path.exists(self.config['PID_FILE']):
-				current_pid = open(self.config['PID_FILE'], 'r').read()
-				self.log.error(u'Unable to start server - already running! @ PID = %s' % current_pid)
+				self.log.critical(u'Unable to start server! PID file exists!!')
 				sys.exit(1)
 			
 			# The First Fork....
@@ -136,7 +147,9 @@ class WSGIServer(object):
 				
 				if pid > 0:
 					# Exit from second parent, save the PID
-					open(self.config['PID_FILE'], 'w').write('%d' % pid)
+					f = open(self.config['PID_FILE'], 'w')
+					f.write('%d' % pid)
+					f.close()
 					
 					# Set the PID file and change permissions
 					uid, gid = get_uid_gid(self.config['SERVER_USER'], self.config['SERVER_GROUP'])
@@ -151,7 +164,22 @@ class WSGIServer(object):
 				sys.exit(1)
 				
 			else:
-				pid = open(self.config['PID_FILE'], 'r').read()
+				# Read back our PID
+				f = open(self.config['PID_FILE'], 'r')
+				pid = f.read()
+				f.close()
+				
+				# Redirect our standard file descriptors
+				sys.stdout.flush()
+				sys.stderr.flush()
+				
+				std_in = file('/dev/null', 'r')
+				std_out = file(self.config['LOG'], 'a+')
+				std_err = file(self.config['LOG'], 'a+', 0)
+				
+				os.dup2(std_in.fileno(), sys.stdin.fileno())
+				os.dup2(std_out.fileno(), sys.stdout.fileno())
+				os.dup2(std_err.fileno(), sys.stderr.fileno())
 				
 			# Switch the user and group
 			switch_uid_gid(self.config['SERVER_USER'], self.config['SERVER_GROUP'])
@@ -159,7 +187,9 @@ class WSGIServer(object):
 		else:
 			# Non-demon
 			pid = os.getpid()
-		
+			
+			std_err = sys.stderr
+			
 		application = import_object(self.config['APP'])
 		app = application()
 		
@@ -173,6 +203,9 @@ class WSGIServer(object):
 			request_queue_size=self.config['SERVER_REQUEST_QUEUE_SIZE'],
 			timeout=self.config['SERVER_TIMEOUT']
 		)
+		
+		self.server.environ['SERVER_SOFTWARE'] = 'Cherryize/%s %s' % (__version__, self.server.version)
+		self.server.environ['wsgi.errors'] = std_err
 		
 		# Setup SSL if it has been requested....
 		if self.config['SSL_CERTIFICATE'] and self.config['SSL_PRIVATE_KEY']:
@@ -202,18 +235,27 @@ class WSGIServer(object):
 		# See if there is a valid process ID
 		if not os.path.exists(self.config['PID_FILE']):
 			# Server is already stopped
-			self.log.debug(u'Trying to stop a server that does not exist! (PID file %s)' % self.config['PID_FILE'])
+			self.log.warning(u'Trying to stop a server that does not exist! (PID file %s)' % self.config['PID_FILE'])
 			return
 		
 		try:
-			pid = open(self.config['PID_FILE'], 'r').read()
+			f = open(self.config['PID_FILE'], 'r')
+			pid = f.read()
+			f.close()
 		except OSError:
-			self.log.info(u'Unable to open PID file: %s' % self.config['PID_FILE'])
+			self.log.error(u'Unable to open PID file: %s' % self.config['PID_FILE'])
+			sys.exit(1)
 		
 		try:
-			os.kill(int(pid), signal.SIGTERM)
-		except OSError, err:
-			self.log.error(u'Unable to kill process')
+			pid = int(pid)
+		except ValueError, e:
+			self.log.critical(u'PID file does not contain a valid Process ID!')
+			sys.exit(1)
+			
+		try:
+			os.kill(pid, signal.SIGTERM)
+		except OSError, e:
+			self.log.critical(u'Unable to kill process - %s' % e)
 			sys.exit(1)
 	
 	def clean(self):
@@ -223,8 +265,8 @@ class WSGIServer(object):
 			if os.path.exists(self.config['PID_FILE']):
 				try:
 					os.remove(self.config['PID_FILE'])
-				except IOError:
-					self.log.error(u'Unable to remove PID file at: %s' % self.config['PID_FILE'])
+				except OSError:
+					self.log.critical(u'Unable to remove PID file at: %s' % self.config['PID_FILE'])
 					
 	def signal_handler(self, sig, stack):
 		"""Handle OS signals sent to the server"""
@@ -249,7 +291,7 @@ class WSGIServer(object):
 			sys.exit(0)
 			
 		else:
-			self.log.info(u'Server recieved unknown signal "%s" - ignoring' % sig)
+			self.log.warning(u'Server recieved unknown signal "%s" - ignoring' % sig)
 			
 		# @@ Todo - any of these needed?
 		# TERM, INT
