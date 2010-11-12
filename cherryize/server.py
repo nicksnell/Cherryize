@@ -20,7 +20,7 @@ from cherryize.wsgiserver import CherryPyWSGIServer
 from cherryize.utils import import_object, get_uid_gid, switch_uid_gid
 
 __all__ = ('WSGIServer',)
-__version__ = '1.0'
+__version__ = '0.9'
 
 DEFAULTS = {
 	'APP': '',
@@ -41,6 +41,8 @@ DEFAULTS = {
 	'SSL_PRIVATE_KEY': '',
 	'PATHS': [],
 	'ENVIRON': {},
+	'FORCE': False,
+	'UMASK': 0
 }
 
 VALID_COMMANDS = 'START', 'STOP', 'RESTART'
@@ -48,7 +50,7 @@ VALID_COMMANDS = 'START', 'STOP', 'RESTART'
 class WSGIServer(object):
 	"""A Basic WSGI Server"""
 	
-	def __init__(self, conf):
+	def __init__(self, conf, runtime_conf={}):
 		
 		assert conf is not None, u'You must provide a configuration file to the server!'
 		
@@ -62,6 +64,7 @@ class WSGIServer(object):
 		
 		server_config = DEFAULTS
 		server_config.update(config)
+		server_config.update(runtime_conf)
 		
 		self.config = server_config
 		
@@ -76,19 +79,11 @@ class WSGIServer(object):
 		)
 		
 		self.log = logging.getLogger('cherryize')
-		
-		# Console logger - In the case of cherrize running as a daemon
-		# this console output only writes to the console before the daemon
-		# forks itself. This is useful for outputting infomration when the 
-		# daemon fails to start.
-		console = logging.StreamHandler()
-		console.setLevel(logging.WARNING)
-		console.setFormatter(logging.Formatter('%(levelname)-8s %(message)s'))
-		
-		self.log.addHandler(console)
 	
 	def run(self, cmd):
 		"""Command line startup"""
+		
+		cmd = cmd.upper()
 		
 		assert cmd in VALID_COMMANDS, u'You must provide a valid commands!'
 		
@@ -97,9 +92,11 @@ class WSGIServer(object):
 		elif cmd == 'STOP':
 			self.stop()
 		elif cmd == 'RESTART':
-			self.stop()
-			self.start()
-	
+			self.restart()
+		else:
+			self.log.critical(u'Unknown command "%s"!' % cmd)
+			sys.exit(1)
+		
 	def start(self):
 		"""Start a server running"""
 		
@@ -139,7 +136,7 @@ class WSGIServer(object):
 			# Decouple ourselves
 			os.chdir(self.config['SERVER_RUN_DIR'])
 			os.setsid()
-			os.umask(0)
+			os.umask(self.config['UMASK'])
 			
 			# The Second fork....
 			try:
@@ -164,22 +161,22 @@ class WSGIServer(object):
 				sys.exit(1)
 				
 			else:
-				# Read back our PID
-				f = open(self.config['PID_FILE'], 'r')
-				pid = f.read()
-				f.close()
-				
+				pid = os.getpid()
+					
 				# Redirect our standard file descriptors
 				sys.stdout.flush()
 				sys.stderr.flush()
 				
-				std_in = file('/dev/null', 'r')
-				std_out = file(self.config['LOG'], 'a+')
-				std_err = file(self.config['LOG'], 'a+', 0)
+				sys.stdin.close()
+				sys.stdout.close()
+				sys.stderr.close()
 				
-				os.dup2(std_in.fileno(), sys.stdin.fileno())
-				os.dup2(std_out.fileno(), sys.stdout.fileno())
-				os.dup2(std_err.fileno(), sys.stderr.fileno())
+				os.close(2)
+				os.close(1)
+				
+				sys.stdout = open(self.config['LOG'], 'a+', 1)
+				os.dup2(1, 2)
+				sys.stderr = os.fdopen(2, 'a+', 0)
 				
 			# Switch the user and group
 			switch_uid_gid(self.config['SERVER_USER'], self.config['SERVER_GROUP'])
@@ -187,7 +184,6 @@ class WSGIServer(object):
 		else:
 			# Non-demon
 			pid = os.getpid()
-			
 			std_err = sys.stderr
 			
 		application = import_object(self.config['APP'])
@@ -205,7 +201,7 @@ class WSGIServer(object):
 		)
 		
 		self.server.environ['SERVER_SOFTWARE'] = 'Cherryize/%s %s' % (__version__, self.server.version)
-		self.server.environ['wsgi.errors'] = std_err
+		self.server.environ['wsgi.errors'] = sys.stderr
 		
 		# Setup SSL if it has been requested....
 		if self.config['SSL_CERTIFICATE'] and self.config['SSL_PRIVATE_KEY']:
@@ -251,13 +247,19 @@ class WSGIServer(object):
 		except ValueError, e:
 			self.log.critical(u'PID file does not contain a valid Process ID!')
 			sys.exit(1)
-			
+		
 		try:
 			os.kill(pid, signal.SIGTERM)
 		except OSError, e:
 			self.log.critical(u'Unable to kill process - %s' % e)
 			sys.exit(1)
 	
+	def restart(self):
+		"""Attempt to restart a running server gracefully"""
+		
+		# @@ TODO: Add restart facility
+		pass
+		
 	def clean(self):
 		"""Attempt to clean up the environment if running as a deamon"""
 		
@@ -267,7 +269,7 @@ class WSGIServer(object):
 					os.remove(self.config['PID_FILE'])
 				except OSError:
 					self.log.critical(u'Unable to remove PID file at: %s' % self.config['PID_FILE'])
-					
+	
 	def signal_handler(self, sig, stack):
 		"""Handle OS signals sent to the server"""
 		
@@ -277,10 +279,7 @@ class WSGIServer(object):
 		elif sig == signal.SIGHUP:
 			self.log.info(u'Server recieved SIGHUP - restarting')
 			
-			self.server.stop()
-			self.clean()
-			
-			self.start()
+			self.restart()
 			
 		elif sig == signal.SIGTERM:
 			self.log.info(u'Server recieved SIGTERM - shutting down')
@@ -305,6 +304,7 @@ def main():
 	"""Run loop"""
 	parser = OptionParser()
 	parser.add_option('-c', '--conf', dest='conf', help='Webserver configuration file', default=None)
+	parser.add_option('-f', '--force', dest='force', action='store_true', help='Force a restart', default=False)
 	
 	options, args = parser.parse_args()
 	
@@ -323,7 +323,11 @@ def main():
 	else:
 		cmd = 'START'
 	
-	server = WSGIServer(config_file_path)
+	cmd_line_override_conf = {
+		'FORCE': options.force,
+	}
+	
+	server = WSGIServer(config_file_path, runtime_conf=cmd_line_override_conf)
 	server.run(cmd)
 	
 if __name__ == '__main__':
